@@ -1,0 +1,79 @@
+import pandas as pd
+import lightgbm as lgb
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+
+# -----------------------------
+# Load data
+# -----------------------------
+train = pd.read_csv("train.csv")  # replace with your actual file path
+features = pd.read_csv("features.csv")  # optional extra features if you have
+
+# -----------------------------
+# Preprocess
+# -----------------------------
+# Ensure Date is datetime
+train['Date'] = pd.to_datetime(train['Date'])
+features['Date'] = pd.to_datetime(features['Date'])
+
+# Merge features (if you have extra features)
+train = train.merge(features, on=['Store','Date','IsHoliday'], how='left')
+
+# Encode categorical columns
+categorical_cols = ['Store', 'Dept', 'IsHoliday']
+le = LabelEncoder()
+for col in categorical_cols:
+    train[col] = le.fit_transform(train[col].astype(str))
+
+# -----------------------------
+# Train/Validation Split
+# -----------------------------
+X = train.drop(['Weekly_Sales', 'Date'], axis=1)
+y = train['Weekly_Sales']
+
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# -----------------------------
+# LightGBM Dataset
+# -----------------------------
+train_data = lgb.Dataset(X_train, label=y_train, categorical_feature=categorical_cols)
+val_data = lgb.Dataset(X_val, label=y_val, categorical_feature=categorical_cols)
+
+# -----------------------------
+# LightGBM Params
+# -----------------------------
+params = {
+    'objective': 'regression',
+    'metric': 'rmse',
+    'boosting_type': 'gbdt',
+    'learning_rate': 0.1,
+    'num_leaves': 31,
+    'verbose': -1
+}
+
+# -----------------------------
+# Train model with early stopping
+# -----------------------------
+from lightgbm import early_stopping
+
+model = lgb.train(
+    params,
+    train_data,
+    valid_sets=[val_data],
+    num_boost_round=1000,
+    callbacks=[early_stopping(stopping_rounds=50)]
+)
+
+# -----------------------------
+# Predictions
+# -----------------------------
+y_pred = model.predict(X_val)
+
+# -----------------------------
+# Optional: Check RMSE
+# -----------------------------
+from sklearn.metrics import mean_squared_error
+import numpy as np
+
+rmse = np.sqrt(mean_squared_error(y_val, y_pred))
+print("Validation RMSE:", rmse)
