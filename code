@@ -1,98 +1,64 @@
-# ==============================
-# Forest Cover Type Classification
-# ==============================
-
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.datasets import fetch_covtype
+import os
+import numpy as np
+import librosa
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, ConfusionMatrixDisplay
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.optimizers import Adam
 
-# ------------------------------
-# 1. Load dataset from sklearn
-# ------------------------------
-data = fetch_covtype(as_frame=True)
-df = data.frame
-df['Cover_Type'] = df['Cover_Type'].astype('category')
+DATASET_PATH = "C:/Users/abdul/OneDrive/Desktop/Eleevo Pathway/Task 6/Data/genres_original/"
 
-print("Dataset shape:", df.shape)
-print(df.head())
+genres = [d for d in os.listdir(DATASET_PATH) if os.path.isdir(os.path.join(DATASET_PATH, d))]
 
-# ------------------------------
-# 2. Split features & target
-# ------------------------------
-X = df.drop('Cover_Type', axis=1)
-y = df['Cover_Type']
+features = []
+labels = []
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, stratify=y, random_state=42
-)
+for genre in genres:
+    genre_path = os.path.join(DATASET_PATH, genre)
+    for file_name in os.listdir(genre_path):
+        file_path = os.path.join(genre_path, file_name)
+        try:
+            signal, sr = librosa.load(file_path, sr=None)
+            mfccs = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=40)
+            mfccs = mfccs.T
+            features.append(mfccs)
+            labels.append(genre)
+        except:
+            continue
 
-# ------------------------------
-# 3. Random Forest - Multi-class
-# ------------------------------
-rf = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
-rf.fit(X_train, y_train)
-y_pred_rf = rf.predict(X_test)
+max_len = max([f.shape[0] for f in features])
+padded_features = []
+for f in features:
+    if f.shape[0] < max_len:
+        pad_width = max_len - f.shape[0]
+        f_padded = np.pad(f, ((0, pad_width), (0,0)), mode='constant')
+    else:
+        f_padded = f[:max_len, :]
+    padded_features.append(f_padded.flatten())
 
-print("\nRandom Forest Classification Report:")
-print(classification_report(y_test, y_pred_rf))
+X = np.array(padded_features)
+y = np.array(labels)
 
-ConfusionMatrixDisplay.from_estimator(rf, X_test, y_test, cmap='Blues')
-plt.title("Random Forest - Multi-class")
-plt.show()
+le = LabelEncoder()
+y_encoded = le.fit_transform(y)
+y_categorical = to_categorical(y_encoded)
 
-# Feature importance
-importances_rf = pd.Series(rf.feature_importances_, index=X.columns)
-importances_rf.sort_values(ascending=False).head(10).plot(kind='bar', title="Top 10 Features (RF)")
-plt.show()
+X_train, X_test, y_train, y_test = train_test_split(X, y_categorical, test_size=0.2, random_state=42)
 
-# ------------------------------
-# 4. XGBoost - Multi-class
-# ------------------------------
-xgb = XGBClassifier(
-    objective='multi:softmax',
-    num_class=len(y.cat.categories),
-    eval_metric='mlogloss',
-    n_estimators=300,
-    learning_rate=0.1,
-    max_depth=8,
-    random_state=42,
-    n_jobs=-1
-)
-xgb.fit(X_train, y_train)
-y_pred_xgb = xgb.predict(X_test)
+model = Sequential([
+    Dense(512, activation='relu', input_shape=(X_train.shape[1],)),
+    Dropout(0.3),
+    Dense(256, activation='relu'),
+    Dropout(0.3),
+    Dense(128, activation='relu'),
+    Dense(y_categorical.shape[1], activation='softmax')
+])
 
-print("\nXGBoost Classification Report:")
-print(classification_report(y_test, y_pred_xgb))
+model.compile(loss='categorical_crossentropy', optimizer=Adam(learning_rate=0.001), metrics=['accuracy'])
 
-ConfusionMatrixDisplay.from_estimator(xgb, X_test, y_test, cmap='Blues')
-plt.title("XGBoost - Multi-class")
-plt.show()
+history = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=50, batch_size=32)
 
-# ------------------------------
-# 5. Binary classification example (Imbalanced)
-# ------------------------------
-# Example: Class 1 (Spruce/Fir) vs all others
-df_binary = df.copy()
-df_binary['Cover_Type'] = (df_binary['Cover_Type'] == 1).astype(int)
-
-X_bin = df_binary.drop('Cover_Type', axis=1)
-y_bin = df_binary['Cover_Type']
-
-Xb_train, Xb_test, yb_train, yb_test = train_test_split(
-    X_bin, y_bin, test_size=0.2, stratify=y_bin, random_state=42
-)
-
-rf_bin = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42, n_jobs=-1)
-rf_bin.fit(Xb_train, yb_train)
-yb_pred_rf = rf_bin.predict(Xb_test)
-
-print("\nRandom Forest - Binary (Class 1 vs Others):")
-print(classification_report(yb_test, yb_pred_rf))
-
-ConfusionMatrixDisplay.from_estimator(rf_bin, Xb_test, yb_test, cmap='Blues')
-plt.title("Random Forest - Binary")
-plt.show()
+test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+print(f"{test_acc:.4f}")
