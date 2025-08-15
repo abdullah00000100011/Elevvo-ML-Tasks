@@ -1,64 +1,27 @@
-import os
+import pandas as pd
 import numpy as np
-import librosa
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
 
-DATASET_PATH = "C:/Users/abdul/OneDrive/Desktop/Eleevo Pathway/Task 6/Data/genres_original/"
+# Load CSV
+test_df = pd.read_csv("path_to_test_csv.csv")  # replace with your CSV path
 
-genres = [d for d in os.listdir(DATASET_PATH) if os.path.isdir(os.path.join(DATASET_PATH, d))]
+# Parameters
+target_size = (64, 64)  # or whatever your model expects
+label_column = "ClassId"
+path_column = "Path"
 
-features = []
-labels = []
+# Load images
+X_test = []
+y_test = []
 
-for genre in genres:
-    genre_path = os.path.join(DATASET_PATH, genre)
-    for file_name in os.listdir(genre_path):
-        file_path = os.path.join(genre_path, file_name)
-        try:
-            signal, sr = librosa.load(file_path, sr=None)
-            mfccs = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=40)
-            mfccs = mfccs.T
-            features.append(mfccs)
-            labels.append(genre)
-        except:
-            continue
+for idx, row in test_df.iterrows():
+    try:
+        img = load_img(row[path_column], target_size=target_size)
+        X_test.append(img_to_array(img))
+        y_test.append(row[label_column])
+    except Exception as e:
+        print(f"Skipping {row[path_column]}: {e}")
 
-max_len = max([f.shape[0] for f in features])
-padded_features = []
-for f in features:
-    if f.shape[0] < max_len:
-        pad_width = max_len - f.shape[0]
-        f_padded = np.pad(f, ((0, pad_width), (0,0)), mode='constant')
-    else:
-        f_padded = f[:max_len, :]
-    padded_features.append(f_padded.flatten())
-
-X = np.array(padded_features)
-y = np.array(labels)
-
-le = LabelEncoder()
-y_encoded = le.fit_transform(y)
-y_categorical = to_categorical(y_encoded)
-
-X_train, X_test, y_train, y_test = train_test_split(X, y_categorical, test_size=0.2, random_state=42)
-
-model = Sequential([
-    Dense(512, activation='relu', input_shape=(X_train.shape[1],)),
-    Dropout(0.3),
-    Dense(256, activation='relu'),
-    Dropout(0.3),
-    Dense(128, activation='relu'),
-    Dense(y_categorical.shape[1], activation='softmax')
-])
-
-model.compile(loss='categorical_crossentropy', optimizer=Adam(learning_rate=0.001), metrics=['accuracy'])
-
-history = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=50, batch_size=32)
-
-test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
-print(f"{test_acc:.4f}")
+X_test = np.array(X_test, dtype="float32") / 255.0
+y_test = to_categorical(np.array(y_test))
